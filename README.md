@@ -1,1 +1,1 @@
-# Fast-and-readable-layered-network-visualizations-with-LNS
+# Fast and readable layered network visualizations using large neighborhood search
