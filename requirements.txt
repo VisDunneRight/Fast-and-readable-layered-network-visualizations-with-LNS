@@ -1,0 +1,9 @@
+gurobipy
+pycairo
+scikit-learn
+networkx
+igraph
+altair
+pydot
+SciPy
+numpy
