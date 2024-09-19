@@ -15,7 +15,7 @@ from src.heuristics import improved_sifting
 
 class LayeredOptimizer:
 	def __init__(self, layered_graph, **kwargs):
-		assert (type(layered_graph) == str and os.path.isfile(layered_graph)) or type(layered_graph) == LayeredGraph or type(layered_graph) == CollapsedGraph, "input needs to be a Path or LayeredGraph object"
+		assert (type(layered_graph) == str and os.path.isfile(layered_graph)) or type(layered_graph) == LayeredGraph or type(layered_graph) == CollapsedGraph, "input needs to be a valid path or LayeredGraph object"
 		if type(layered_graph) == LayeredGraph or type(layered_graph) == CollapsedGraph:
 			self.g = layered_graph
 		else:
@@ -54,7 +54,9 @@ class LayeredOptimizer:
 		self.return_experiment_data = kwargs.get("return_experiment_data", False)
 		self.create_video = kwargs.get("create_video", False)
 		self.constrain_straight_long_arcs = kwargs.get("constrain_straight_long_arcs", False)
+		self.record_solution_data_over_time = kwargs.get("record_solution_data_over_time", False)
 		self.name = kwargs.get("name", "graph1")
+		self.nthreads = kwargs.get("nthreads", 0)
 		self.print_info = []
 		if self.polyhedral_constraints:
 			self.claw_constraints, self.dome_path_constraints = True, True
@@ -75,9 +77,16 @@ class LayeredOptimizer:
 			t1 = time.time() - t1
 
 			""" Optimize model """
-			num_crossings, t2, t3 = self.__optimize_crossing_reduction_model(m, g, env, x_vars=x_vars)
+			if self.record_solution_data_over_time:
+				num_crossings, t2, t3, ncr_list, ntimes_list = self.__optimize_crossing_reduction_model(m, g, env, x_vars=x_vars)
+			else:
+				num_crossings, t2, t3 = self.__optimize_crossing_reduction_model(m, g, env, x_vars=x_vars)
 
-			""" Return data """
+			""" Adjust objects if leaves were collapsed """
+			if self.collapse_leaves:
+				g = g.old_g
+
+			""" Print results and return data """
 			print(f"Number of crossings: {num_crossings}", f"\tOptimization time: {round(m.runtime, 3)}")
 			print(f"g calc: {g.num_edge_crossings()}")
 
@@ -86,6 +95,9 @@ class LayeredOptimizer:
 
 			if self.return_experiment_data:
 				return len(x_vars), len(c_vars), m.numVars, m.numConstrs, num_crossings, m.runtime, m.status, int(m.nodeCount), round(t1, 3)
+
+			if self.record_solution_data_over_time:
+				return ncr_list, ntimes_list
 
 			return round(t1 + t2 + t3, 3), num_crossings
 
@@ -231,8 +243,19 @@ class LayeredOptimizer:
 		m.setParam("OutputFlag", 0)
 		if self.aggro_presolve:
 			m.setParam("Presolve", 2)
+		if self.nthreads > 0:
+			m.setParam("Threads", self.nthreads)
+			print("Threads =", m.Params.Threads)
 		t2 = time.time()
-		m.optimize()
+		if self.record_solution_data_over_time:
+			time_values, crossing_values = [], []
+			def callbackfn(model, where):
+				if where == GRB.Callback.MIPSOL:
+					time_values.append(model.cbGet(GRB.Callback.RUNTIME))
+					crossing_values.append(model.cbGet(GRB.Callback.MIPSOL_OBJBST))
+			m.optimize(callbackfn)
+		else:
+			m.optimize()
 		t2 = time.time() - t2
 		if (m.status != 2 and m.status != 9) or m.SolCount == 0:
 			print("model returned status code:", m.status)
@@ -253,7 +276,7 @@ class LayeredOptimizer:
 
 		""" Draw pre-bendiness graph """
 		# vis.draw_graph(g, "interim")
-		print(f"Number of crossings: {num_crossings}", f"\tOptimization time: {round(m.runtime, 3)}")
+		# print(f"Number of crossings: {num_crossings}", f"\tOptimization time: {round(m.runtime, 3)}")
 		# print(f"g calc: {g.num_edge_crossings()}")
 
 		""" Sequential bendiness reduction """
@@ -277,7 +300,10 @@ class LayeredOptimizer:
 			else:
 				vis.draw_graph(g, self.name)
 
-		return num_crossings, t2, t3
+		if self.record_solution_data_over_time:
+			return num_crossings, t2, t3, crossing_values, time_values
+		else:
+			return num_crossings, t2, t3
 
 	def __sequential_br(self, graph_arg=None, substitute_x_vars=None, env=None, streamline=True):
 		g = self.g if graph_arg is None else graph_arg
@@ -737,6 +763,7 @@ class LayeredOptimizer:
 			# 		del self.x_var_assign[xv[1], xv[0]]
 			# print(to_remove)
 			# print(self.x_var_assign)
+
 			return graph.old_g, time.time() - t4, num_crossings
 		else:
 			return graph, 0, num_crossings
